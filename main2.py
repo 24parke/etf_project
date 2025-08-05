@@ -1,16 +1,13 @@
-# import backtrader as bt
 import yfinance as yf
 import pandas as pd
 import matplotlib as plt
 import matplotlib.pyplot as plt
 import numpy as np
 import random
-#sktime, prophet, kats, darts, autots, tsfresh
-#implied vol vs historical vol
+from dateutil.relativedelta import relativedelta
 
-import warnings
-warnings.filterwarnings("ignore")
 
+# --- 1) Modify Summary to accept start/end dates ---
 class Summary:
     def __init__(self, underlying, triple, start, end):
         self.UNDERLYING = underlying
@@ -181,104 +178,156 @@ class Summary:
             self.dfr[f"shares_{self.TRIPLE}"][i] = self.shares_trip
         return(self.dfr["P/L"].sum())
     
-    # def calculate_pl(self):
-    #     for i in range(1, len(self.dat_under)):
 
 
-        
-#boyl vs ung (boyl is triple natural gas)
-#TQQQ vs QQQ
-#UDOW vs DIA
-#DUSL vs XLI
-#XBI vs LABU
-#FAS vs XLF
-#ERX vs XLE
-#TNA vs IWM
+# --- 2) Set up your ETF/triple list and interval lengths ---
+pairs = [
+    ("SPY","SPXL"),
+    # ("UNG","BOYL"),
+    ("SOXX", "SOXL"),
+    ("IWM", "TNA"),
+    ("QQQ","TQQQ"),
+    ("DIA","UDOW"),
+    # ("DUSL","XLI"),
+    ("XBI","LABU"),
+    ("XLF","FAS")
+    # ("ERX","XLE"),
 
-#for loop for each etf and its triple
-#generate random time intervals eg. 5 yrs, 20 yrs, 50 yrs
-#generate a random start point since inception to present-random time interval
-#run the main function, extract gap and p/l
-#
+]
+# interval_years = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+n_simulations = 35  # per pair
+pos_gap = 0
+pos_pl = 0
+pgppl = 0
 
+results = []
 
+# --- 3) Simulation loop ---
+for under, trip in pairs:
+    # download once to get date bounds
+    full = yf.download(
+            [under, trip],
+            period="max",
+            group_by="ticker",
+            auto_adjust=False
+        )
 
+    # 2) extract just the Close series for each ticker
+    #    this gives you a DataFrame with columns ["SPY","SPXL"]
+    closes = full.xs("Close", axis=1, level=1)
 
+    # 3) for each column, find the first valid (non-NaN) index
+    first_valid = closes.apply(lambda col: col.first_valid_index())
 
+    # 4) the “youngest” inception is the later (max) of those two
+    first_date = first_valid.max()
+    last_date = full.index.max()
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# x = np.zeros(29)
-# y = np.zeros(29)
-# counter = 0
-# start = .05
-# end = .3
-# step = .01
-# i = start
-# df_yr = pd.DataFrame()
-
-# while (i <= end):
-#     spy = Summary(underlying="SPY", triple="SPXU")
-#     spy.summary_stats()
-#     spy.init_portfolio()
-#     x[counter] = i
-#     y[counter] = spy.beta_norm_strategy(i)
-#     print(y[counter])
-#     counter += 1
-
-#     i = round(step+i, 2)
+    for _ in range(n_simulations):
+        # maximum = (last_date - first_date).years
+        # years = random.randint(4, maximum)
 
 
-#     # df_yr["SOXL_close"] = spy.dfr["SOXL_Close"]
-#     df_yr[f"{i}"] = spy.dfr["cumulative_P/L"]
+        # # years = random.choice(interval_years)
+        # # ensure there's room for that many years
+        # max_offset_days = (last_date - first_date).days - int(years * 365)
 
-#     # df_yr[f"{i} shares SOXL"]   = spy.dfr[f"shares_SOXL"]
-#     plt.plot(spy.dfr["cumulative_P/L"], label = f"Adjust: {float(i)}", linewidth=.85)
-#     # plt.plot(spy.dfr[f"shares_{spy.TRIPLE}"]*10, label = f"{i} shares SOXL", linewidth = .85)
-#     # plt.plot(df_yr["SOXL_close"], label = "SOXL_close", linewidth = .85)
+        # if max_offset_days <= 0:
 
-# # plt.plot(x,y)
-# # df_yr["diff"] = df_yr.iloc[:, 1] - df_yr.iloc[:, 3]
-# df_yr = round(df_yr, 2)
-# df_yr.to_csv("test2.csv")
-
-
-# plt.legend()
-# plt.savefig("new.png")
-# plt.show()
+        #     continue  # skip if you can't fit a window of that size
 
 
 
+        # # random start
+        # start_offset = random.randint(0, max_offset_days)
+        # start_date = first_date + pd.Timedelta(days=start_offset)
+        # end_date   = start_date + pd.Timedelta(days=int(years*365))
 
 
-start = "2009-02-07"
-end = "2023-08-21"
 
-spy = Summary(underlying="DIA", triple="UDOW", start = start, end = end)
-spy.summary_stats()
-spy.init_portfolio()
+        # 1) total span in days
+        diff_days = (last_date - first_date).days
 
-print(spy.beta_norm_strategy(.001))
-spy.plot_portfolio()
+        # 2) maximum whole years you can fit
+        max_years = diff_days // 365
+        if max_years < 6:
+            raise ValueError("Not enough history to sample a 4-year window")
+
+        # 3) pick your random window length
+        years = random.randint(6, max_years)
+
+        # 4) now compute how many days that truly is, calendar-aware
+        #    by adding N years to first_date
+        #    then taking the difference in days
+        candidate_end = first_date + relativedelta(years=years)
+        delta_days    = (candidate_end - first_date).days
+
+        # 5) ensure you still have room for the offset
+        max_offset_days = diff_days - delta_days
+        offset_days     = random.randint(0, max_offset_days)
+
+        start_date = first_date + pd.Timedelta(days=offset_days)
+        end_date   = start_date + relativedelta(years=years)
+
+        # instantiate & run
+        summ = Summary(under, trip,
+                       start=start_date.strftime("%Y-%m-%d"),
+                       end  =end_date.strftime("%Y-%m-%d"))
+        summ.summary_stats()
+        summ.init_portfolio()
+        pl = summ.beta_norm_strategy(exposure_indicator=0.0001)
+        # summ.plot_portfolio()
+
+        # extract gap between final ideal vs. triple cumulative
+        # final_ideal = summ.dfr.loc[:, 'ideal_cumulative']
+        # final_trip = summ.dfr.loc[:, f"{trip}_cumulative"]
+        final_ideal = summ.dfr["ideal_cumulative"].iloc[-1]
+        final_trip  = summ.dfr[f"{trip}_cumulative"].iloc[-1]
+        print(final_ideal)
+        print(final_trip)
+        gap = final_ideal - final_trip
+        if (gap > 0 and pl > 0):
+            pgppl += 1
+        elif (pl > 0):
+            pos_pl += 1
+        elif (gap > 0):
+            pos_gap += 1
+
+
+        results.append({
+            "underlying": under,
+            "triple":     trip,
+            "years":      years,
+            "start":      start_date,
+            "gap":        gap,
+            "P/L":        pl
+        })
+
+# --- 4) Aggregate and compute correlation ---
+df_res = pd.DataFrame(results)
+df_res.plot.scatter(x="gap", y = "P/L")
+plt.xlabel('Gap')
+plt.ylabel('P/L')
+plt.grid(True)
+plt.show()
+plt.savefig("n.png")
+corr = df_res["gap"].corr(df_res["P/L"])
+print(f"Correlation between gap and P/L over all sims: {corr:.3f}")
+
+
+df_res.plot.scatter(x="years", y = "gap")
+plt.xlabel('years')
+plt.ylabel('gap')
+plt.grid(True)
+plt.show()
+corr = df_res["years"].corr(df_res["gap"])
+print(f"Correlation between time and gap over all sims: {corr:.3f}")
+
+
+print(f"number of positive gaps: {pos_gap}")
+print(f"number of positive p/ls: {pos_pl}")
+print(f"number of positive gaps with positive p/ls: {pgppl}")
+
+df_res.to_csv("n.csv")
+
+
