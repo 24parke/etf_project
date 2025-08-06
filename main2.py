@@ -5,6 +5,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import random
 from dateutil.relativedelta import relativedelta
+from scipy import stats
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.linear_model import LinearRegression
+
 
 
 # --- 1) Modify Summary to accept start/end dates ---
