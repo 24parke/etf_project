@@ -5,6 +5,7 @@ import matplotlib as plt
 import matplotlib.pyplot as plt
 import numpy as np
 import random
+import math
 #sktime, prophet, kats, darts, autots, tsfresh
 #implied vol vs historical vol
 
@@ -17,7 +18,7 @@ class Summary:
         self.TRIPLE = triple
         self.STARTING_VALUE_UNDER = 3000
         self.STARTING_VALUE_TRIP = -1000
-        self.TICKERS = [underlying, triple]
+        self.TICKERS = [underlying, triple, "^VIX"]
         self.cash = 0
 
         self.data = yf.download(self.TICKERS,start=start, end = end, group_by="ticker", auto_adjust=False)
@@ -25,25 +26,35 @@ class Summary:
         self.dat_trip = self.data[triple]['Close']
 
         dates = [d.strftime('%Y-%m-%d') for d in self.data.index.date]
-        self.dfr = pd.DataFrame(data = {f"{underlying}_Close": self.dat_under})
+        self.dfr = pd.DataFrame(data = {"VIX": self.data["^VIX"]['Close']})
+        # self.dfr = pd.DataFrame(data = {f"{underlying}_Close": self.dat_under})
 
         self.shares_under = self.STARTING_VALUE_UNDER / self.dat_under[0]
         self.shares_trip = self.STARTING_VALUE_TRIP / self.dat_trip[0]
         
-
+        
         self.dfr.index = dates
+        self.dfr[f"{underlying}_Close"] = self.dat_under
         self.dfr[f"{underlying}_per_change"] = 1
         self.dfr[f"{underlying}_cumulative"] = 1
         self.dfr[f"{triple}_Close"] = self.dat_trip
         self.dfr[f"{triple}_per_change"] = 1
         self.dfr[f"{triple}_cumulative"] = 1
+        # self.dfr[f"{triple}_log_per_change"] = 1
+        # self.dfr[f"{triple}_daily_volatility"] = 1
         self.dfr[f"ideal_per_change"] = 1
         self.dfr[f"ideal_cumulative"] = 1
         self.dfr[f"shares_{underlying}"] = 0
         self.dfr[f"shares_{triple}"] = 0
         self.dfr["P/L"] = 0
 
+        # self.daily_log_returns = self.daily_log_returns(self.dat_trip)
 
+
+    def daily_log_returns(self, price: pd.Series) -> pd.Series:
+        """Log returns r_t = ln(P_t / P_{t-1})."""
+        r = np.log(price / price.shift(1))
+        return r.dropna()
 
     def summary_stats(self):
         for i in range(1, len(self.dat_under)):
@@ -55,12 +66,17 @@ class Summary:
             self.dfr[f"{self.TRIPLE}_cumulative"][i] = self.dfr[f"{self.TRIPLE}_cumulative"][i-1]*(1 + self.dfr[f"{self.TRIPLE}_per_change"][i])
             self.dfr["ideal_cumulative"][i] = self.dfr["ideal_cumulative"][i-1]*(1 + self.dfr["ideal_per_change"][i])
 
+            # self.dfr[f"{self.TRIPLE}_log_per_change"][i] *= np.log(self.dfr[f"{self.UNDERLYING}_per_change"][i] - 1)
+            # var_d = self.daily_log_returns.rolling(window=20).var(ddof=1)
+            # self.dfr[f"{self.TRIPLE}_daily_volatility"][i] = np.sqrt(var_d)
+
         self.dfr[f"{self.UNDERLYING}_per_change"] *= 100
         self.dfr[f"{self.TRIPLE}_per_change"] *= 100
         self.dfr["ideal_per_change"] *= 100
         self.dfr[f"{self.UNDERLYING}_cumulative"] *= 100
         self.dfr[f"{self.TRIPLE}_cumulative"] *= 100
         self.dfr["ideal_cumulative"] *= 100
+        # self.dfr[f"{self.TRIPLE}_log_per_change"] *= 100
 
     def calc_returns(self):
         quart_under = self.data[self.UNDERLYING]['Adj Close'].resample('ME').last().pct_change()*3
@@ -95,6 +111,7 @@ class Summary:
         plt.plot(self.dfr['portfolio_total'], label = "portfolio_total", linewidth=0.85)
         plt.plot(self.dfr['beta_exposure'], label = "beta_exposure", linewidth=0.85)
         plt.plot(self.dfr["cumulative_P/L"], label = "cumulative_P/L", linewidth=.85)
+
         plt.legend()
         plt.grid(True)
         plt.savefig("new.png")
@@ -148,6 +165,15 @@ class Summary:
             # print(f"__________DAY {i}______________")
 
             self.update_portfolio(i)
+            
+            if (self.dfr["VIX"][i] <= 15):
+                exposure_indicator = .01
+            elif (self.dfr["VIX"][i] > 15 and self.dfr["VIX"][i] <= 20):
+                exposure_indicator = .03
+            elif (self.dfr["VIX"][i] > 20 and self.dfr["VIX"][i] <= 30):
+                exposure_indicator = .06
+            else:
+                exposure_indicator = .1
             if (self.dfr['beta_exposure'][i] > (exposure_indicator * self.dfr[f"portfolio_{self.UNDERLYING}_long"][i])):
                 # print(f"beta exposure: {self.dfr['beta_exposure'][i]}")
                 beta = self.dfr['beta_exposure'][i]
@@ -273,10 +299,10 @@ class Summary:
 
 
 
-start = "2009-02-07"
-end = "2023-08-21"
+start = "2010-06-09"
+end = "2024-07-04"
 
-spy = Summary(underlying="DIA", triple="UDOW", start = start, end = end)
+spy = Summary(underlying="SOXX", triple="SOXL", start = start, end = end)
 spy.summary_stats()
 spy.init_portfolio()
 

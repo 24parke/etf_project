@@ -1,14 +1,15 @@
 import yfinance as yf
 import pandas as pd
-import matplotlib as plt
+# import matplotlib as plt
 import matplotlib.pyplot as plt
 import numpy as np
 import random
 from dateutil.relativedelta import relativedelta
 from scipy import stats
-from sklearn.preprocessing import PolynomialFeatures
-from sklearn.linear_model import LinearRegression
-
+# from sklearn.preprocessing import PolynomialFeatures
+# from sklearn.linear_model import LinearRegression
+RNG = np.random.default_rng(12)
+# random.seed(11)
 
 
 # --- 1) Modify Summary to accept start/end dates ---
@@ -18,7 +19,7 @@ class Summary:
         self.TRIPLE = triple
         self.STARTING_VALUE_UNDER = 3000
         self.STARTING_VALUE_TRIP = -1000
-        self.TICKERS = [underlying, triple]
+        self.TICKERS = [underlying, triple, "^VIX"]
         self.cash = 0
 
         self.data = yf.download(self.TICKERS,start=start, end = end, group_by="ticker", auto_adjust=False)
@@ -26,23 +27,28 @@ class Summary:
         self.dat_trip = self.data[triple]['Close']
 
         dates = [d.strftime('%Y-%m-%d') for d in self.data.index.date]
-        self.dfr = pd.DataFrame(data = {f"{underlying}_Close": self.dat_under})
+        self.dfr = pd.DataFrame(data = {"VIX": self.data["^VIX"]['Close']})
+        # self.dfr = pd.DataFrame(data = {f"{underlying}_Close": self.dat_under})
 
         self.shares_under = self.STARTING_VALUE_UNDER / self.dat_under[0]
         self.shares_trip = self.STARTING_VALUE_TRIP / self.dat_trip[0]
         
-
+        
         self.dfr.index = dates
+        self.dfr[f"{underlying}_Close"] = self.dat_under
         self.dfr[f"{underlying}_per_change"] = 1
         self.dfr[f"{underlying}_cumulative"] = 1
         self.dfr[f"{triple}_Close"] = self.dat_trip
         self.dfr[f"{triple}_per_change"] = 1
         self.dfr[f"{triple}_cumulative"] = 1
+        # self.dfr[f"{triple}_log_per_change"] = 1
+        # self.dfr[f"{triple}_daily_volatility"] = 1
         self.dfr[f"ideal_per_change"] = 1
         self.dfr[f"ideal_cumulative"] = 1
         self.dfr[f"shares_{underlying}"] = 0
         self.dfr[f"shares_{triple}"] = 0
         self.dfr["P/L"] = 0
+
 
 
 
@@ -56,12 +62,17 @@ class Summary:
             self.dfr[f"{self.TRIPLE}_cumulative"][i] = self.dfr[f"{self.TRIPLE}_cumulative"][i-1]*(1 + self.dfr[f"{self.TRIPLE}_per_change"][i])
             self.dfr["ideal_cumulative"][i] = self.dfr["ideal_cumulative"][i-1]*(1 + self.dfr["ideal_per_change"][i])
 
+            # self.dfr[f"{self.TRIPLE}_log_per_change"][i] *= np.log(self.dfr[f"{self.UNDERLYING}_per_change"][i] - 1)
+            # var_d = self.daily_log_returns.rolling(window=20).var(ddof=1)
+            # self.dfr[f"{self.TRIPLE}_daily_volatility"][i] = np.sqrt(var_d)
+
         self.dfr[f"{self.UNDERLYING}_per_change"] *= 100
         self.dfr[f"{self.TRIPLE}_per_change"] *= 100
         self.dfr["ideal_per_change"] *= 100
         self.dfr[f"{self.UNDERLYING}_cumulative"] *= 100
         self.dfr[f"{self.TRIPLE}_cumulative"] *= 100
         self.dfr["ideal_cumulative"] *= 100
+        # self.dfr[f"{self.TRIPLE}_log_per_change"] *= 100
 
     def calc_returns(self):
         quart_under = self.data[self.UNDERLYING]['Adj Close'].resample('ME').last().pct_change()*3
@@ -86,6 +97,20 @@ class Summary:
         self.dfr["beta_exposure_per"] = 0
         self.dfr["cumulative_P/L"] = 0
         
+
+    def sharpe_ratio(returns, rf_annual, periods_per_year=252):
+        # returns = returns.dropna()
+        # remove days where previous NAV <= 0 to avoid exploding ratios
+        # (optional, but helpful if your portfolio_total can cross/approach zero)
+        # returns = returns[ summ.dfr["portfolio_total"].shift(1) > 0 ]
+
+        if len(returns) < 2 or returns.std(ddof=1) == 0:
+            return np.nan
+
+        rf_daily = rf_annual / periods_per_year
+        excess = returns - rf_daily
+        return np.sqrt(periods_per_year) * excess.mean() / excess.std(ddof=1)
+
 
 
     def plot_portfolio(self):
@@ -149,6 +174,15 @@ class Summary:
             # print(f"__________DAY {i}______________")
 
             self.update_portfolio(i)
+
+            if (self.dfr["VIX"][i] <= 15):
+                exposure_indicator = .01
+            elif (self.dfr["VIX"][i] > 15 and self.dfr["VIX"][i] <= 20):
+                exposure_indicator = .03
+            elif (self.dfr["VIX"][i] > 20 and self.dfr["VIX"][i] <= 30):
+                exposure_indicator = .06
+            else:
+                exposure_indicator = .1
             if (self.dfr['beta_exposure'][i] > (exposure_indicator * self.dfr[f"portfolio_{self.UNDERLYING}_long"][i])):
                 # print(f"beta exposure: {self.dfr['beta_exposure'][i]}")
                 beta = self.dfr['beta_exposure'][i]
@@ -199,19 +233,21 @@ pairs = [
 
 ]
 # interval_years = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
-n_simulations = 35  # per pair
+n_simulations = 1  # per pair
 pos_gap = 0
 pos_pl = 0
 pgppl = 0
+n_total_iter = 0
 
 results = []
 
 # --- 3) Simulation loop ---
+
 for under, trip in pairs:
     # download once to get date bounds
     full = yf.download(
             [under, trip],
-            period="max",
+            period="max", end = "2025-08-11",
             group_by="ticker",
             auto_adjust=False
         )
@@ -258,7 +294,7 @@ for under, trip in pairs:
             raise ValueError("Not enough history to sample a 4-year window")
 
         # 3) pick your random window length
-        years = random.randint(6, max_years)
+        years = RNG.integers(6, max_years)
 
         # 4) now compute how many days that truly is, calendar-aware
         #    by adding N years to first_date
@@ -268,10 +304,13 @@ for under, trip in pairs:
 
         # 5) ensure you still have room for the offset
         max_offset_days = diff_days - delta_days
-        offset_days     = random.randint(0, max_offset_days)
+        offset_days     = RNG.integers(0, max_offset_days)
 
         start_date = first_date + pd.Timedelta(days=offset_days)
         end_date   = start_date + relativedelta(years=years)
+
+        # print(start_date)
+        # print(end_date)
 
         # instantiate & run
         summ = Summary(under, trip,
@@ -279,12 +318,11 @@ for under, trip in pairs:
                        end  =end_date.strftime("%Y-%m-%d"))
         summ.summary_stats()
         summ.init_portfolio()
-        pl = summ.beta_norm_strategy(exposure_indicator=0.0001)
-        # summ.plot_portfolio()
+        pl = summ.beta_norm_strategy(exposure_indicator=0.00001)
+        ## summ.plot_portfolio()
 
         # extract gap between final ideal vs. triple cumulative
-        # final_ideal = summ.dfr.loc[:, 'ideal_cumulative']
-        # final_trip = summ.dfr.loc[:, f"{trip}_cumulative"]
+
         final_ideal = summ.dfr["ideal_cumulative"].iloc[-1]
         final_trip  = summ.dfr[f"{trip}_cumulative"].iloc[-1]
         print(final_ideal)
@@ -292,19 +330,23 @@ for under, trip in pairs:
         gap = final_ideal - final_trip
         if (gap > 0 and pl > 0):
             pgppl += 1
-        elif (pl > 0):
+        if (pl > 0):
             pos_pl += 1
-        elif (gap > 0):
+        if (gap > 0):
             pos_gap += 1
+        n_total_iter += 1
 
 
+        rets = summ.dfr["P/L"] / summ.dfr["portfolio_total"].shift(1)
+        sr = summ.sharpe_ratio(rets, .04)  # or use a T-bill rate if you want
         results.append({
             "underlying": under,
             "triple":     trip,
             "years":      years,
             "start":      start_date,
             "gap":        gap,
-            "P/L":        pl
+            "P/L":        pl,
+            "sharpe":     sr
         })
 
 # --- 4) Aggregate and compute correlation ---
@@ -314,7 +356,6 @@ plt.xlabel('Gap')
 plt.ylabel('P/L')
 plt.grid(True)
 plt.show()
-plt.savefig("n.png")
 corr = df_res["gap"].corr(df_res["P/L"])
 print(f"Correlation between gap and P/L over all sims: {corr:.3f}")
 
@@ -331,6 +372,7 @@ print(f"Correlation between time and gap over all sims: {corr:.3f}")
 print(f"number of positive gaps: {pos_gap}")
 print(f"number of positive p/ls: {pos_pl}")
 print(f"number of positive gaps with positive p/ls: {pgppl}")
+print(f"number of total iters: {n_total_iter}")
 
 df_res.to_csv("n.csv")
 
