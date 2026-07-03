@@ -300,7 +300,7 @@ class Summary:
 
 
 start = "2010-06-09"
-end = "2024-07-04"
+end = "2026-06-16"
 
 spy = Summary(underlying="SOXX", triple="SOXL", start = start, end = end)
 spy.summary_stats()
